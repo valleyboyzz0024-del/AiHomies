@@ -50,6 +50,8 @@ class AIProvider(Enum):
     ANTHROPIC = "anthropic"
     OPENROUTER = "openrouter"
     XAI = "xai"
+    GROQ = "groq"
+    TOGETHER = "together"
 
 @dataclass
 class AIModel:
@@ -104,6 +106,47 @@ AI_MODELS = {
         supports_vision=True,
         icon="🚀",
         color="#dc2626"
+    ),
+    # Budget Models - For continuous oversight
+    "gpt-4o-mini": AIModel(
+        provider=AIProvider.OPENAI,
+        model_id="gpt-4o-mini",
+        display_name="GPT-4o Mini",
+        description="Budget OpenAI - Fast & cheap for monitoring",
+        requires_api_key="openai",
+        supports_vision=True,
+        icon="💰",
+        color="#10b981"
+    ),
+    "claude-haiku": AIModel(
+        provider=AIProvider.ANTHROPIC,
+        model_id="claude-3-5-haiku-20241022",
+        display_name="Claude Haiku",
+        description="Budget Claude - Lightning fast",
+        requires_api_key="anthropic",
+        supports_vision=True,
+        icon="⚡",
+        color="#22c55e"
+    ),
+    "groq-llama": AIModel(
+        provider=AIProvider.GROQ,
+        model_id="llama-3.1-70b-versatile",
+        display_name="Llama 3.1 (Groq)",
+        description="Ultra-fast inference - Perfect for oversight",
+        requires_api_key="groq",
+        supports_vision=False,
+        icon="🐎",
+        color="#8b5cf6"
+    ),
+    "together-llama": AIModel(
+        provider=AIProvider.TOGETHER,
+        model_id="meta-llama/Llama-3-70b-chat-hf",
+        display_name="Llama 3 (Together)",
+        description="Fast & cheap - Continuous monitoring",
+        requires_api_key="together",
+        supports_vision=False,
+        icon="🤝",
+        color="#06b6d4"
     )
 }
 
@@ -274,6 +317,234 @@ class CommandExecutor:
                     item['exit_code'] = exit_code
 
             return {'status': 'completed', 'exit_code': exit_code}
+
+class GoalMemorySystem:
+    """Remembers the user's original intent and tracks progress"""
+
+    def __init__(self):
+        self.current_goal = None
+        self.sub_goals = []
+        self.completed_tasks = []
+        self.deviation_warnings = []
+        self.start_time = None
+        self.expected_duration = None  # in minutes
+
+    def set_goal(self, goal_description: str, expected_duration: int = None):
+        """Set the main goal before going to sleep"""
+        self.current_goal = {
+            'description': goal_description,
+            'timestamp': datetime.now().isoformat(),
+            'status': 'active'
+        }
+        self.start_time = time.time()
+        self.expected_duration = expected_duration
+        self.sub_goals = []
+        self.completed_tasks = []
+        self.deviation_warnings = []
+
+        print(f"[GOAL] Set: {goal_description}")
+        if expected_duration:
+            print(f"[GOAL] Expected duration: {expected_duration} minutes")
+
+    def add_sub_goal(self, sub_goal: str):
+        """AI can break down goal into sub-tasks"""
+        self.sub_goals.append({
+            'description': sub_goal,
+            'timestamp': datetime.now().isoformat(),
+            'status': 'pending'
+        })
+
+    def mark_task_complete(self, task_description: str):
+        """Mark a task as completed"""
+        self.completed_tasks.append({
+            'description': task_description,
+            'timestamp': datetime.now().isoformat()
+        })
+
+    def add_deviation(self, deviation_description: str, severity: str = 'medium'):
+        """Log when agent deviates from goal"""
+        self.deviation_warnings.append({
+            'description': deviation_description,
+            'severity': severity,
+            'timestamp': datetime.now().isoformat()
+        })
+        print(f"[DEVIATION WARNING] {severity.upper()}: {deviation_description}")
+
+    def get_progress_summary(self) -> dict:
+        """Get current progress towards goal"""
+        elapsed = (time.time() - self.start_time) / 60 if self.start_time else 0
+
+        return {
+            'goal': self.current_goal,
+            'sub_goals': self.sub_goals,
+            'completed_tasks': self.completed_tasks,
+            'deviation_warnings': self.deviation_warnings,
+            'elapsed_minutes': round(elapsed, 1),
+            'expected_minutes': self.expected_duration,
+            'on_track': len(self.deviation_warnings) < 3
+        }
+
+class AgentOversightMonitor:
+    """Dual-AI system that watches Claude Code agents"""
+
+    def __init__(self, assistant):
+        self.assistant = assistant
+        self.goal_memory = GoalMemorySystem()
+        self.primary_overseer = "groq-llama"  # Fast/cheap for continuous monitoring
+        self.secondary_overseer = "claude-4-5-sonnet"  # Premium for decisions
+        self.is_monitoring_agents = False
+        self.last_screen_analysis = None
+        self.suspicious_activity_count = 0
+
+    def start_agent_oversight(self, user_goal: str, expected_duration: int = None):
+        """Start monitoring Claude Code agents"""
+        self.goal_memory.set_goal(user_goal, expected_duration)
+        self.is_monitoring_agents = True
+        self.suspicious_activity_count = 0
+        print(f"[OVERSIGHT] Started monitoring agents for goal: {user_goal}")
+
+    def stop_agent_oversight(self):
+        """Stop monitoring"""
+        self.is_monitoring_agents = False
+        print("[OVERSIGHT] Stopped monitoring")
+
+    def analyze_agent_activity(self, screenshot: str) -> dict:
+        """Primary overseer (cheap AI) analyzes screen for agent activity"""
+        if not self.is_monitoring_agents:
+            return None
+
+        model = AI_MODELS[self.primary_overseer]
+
+        messages = [
+            {
+                "role": "system",
+                "content": f"""You are monitoring a Claude Code agent to ensure it stays on task.
+
+USER'S ORIGINAL GOAL: {self.goal_memory.current_goal['description'] if self.goal_memory.current_goal else 'None set'}
+
+Your job:
+1. Check if the agent is working on the user's goal
+2. Detect if agent is:
+   - Deleting large amounts of code unnecessarily
+   - Skipping work or giving fake test results
+   - Going off on tangents unrelated to the goal
+   - Refusing to read files claiming they're "too big"
+   - Creating unnecessary files instead of editing existing ones
+3. Look for terminal output, file changes, test results
+
+Respond with JSON:
+{{
+    "on_task": true/false,
+    "current_activity": "brief description of what agent is doing",
+    "suspicious": true/false,
+    "concern_level": "none|low|medium|high|critical",
+    "explanation": "why you're concerned or not",
+    "recommendation": "what to do"
+}}
+
+Only respond with JSON, nothing else."""
+            },
+            {
+                "role": "user",
+                "content": "Analyze the current screen for agent activity."
+            }
+        ]
+
+        try:
+            # Use the cheap model for continuous monitoring
+            response = self.assistant.get_ai_response(messages, screenshot if model.supports_vision else None)
+
+            # Parse JSON
+            import re
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                analysis = json.loads(json_match.group())
+                self.last_screen_analysis = analysis
+
+                # Track suspicious activity
+                if analysis.get('suspicious'):
+                    self.suspicious_activity_count += 1
+
+                    # Escalate to premium AI if too many suspicions
+                    if self.suspicious_activity_count >= 3:
+                        return self._escalate_to_premium_overseer(screenshot, analysis)
+
+                return analysis
+        except Exception as e:
+            print(f"[OVERSIGHT ERROR] {e}")
+
+        return None
+
+    def _escalate_to_premium_overseer(self, screenshot: str, primary_analysis: dict) -> dict:
+        """Escalate to premium AI (Claude 4.5) for important decisions"""
+        print(f"[OVERSIGHT] Escalating to premium overseer: {self.secondary_overseer}")
+
+        model = AI_MODELS[self.secondary_overseer]
+
+        messages = [
+            {
+                "role": "system",
+                "content": f"""You are the SENIOR overseer AI. A junior AI has flagged suspicious activity.
+
+USER'S GOAL: {self.goal_memory.current_goal['description'] if self.goal_memory.current_goal else 'None'}
+
+JUNIOR AI'S ANALYSIS:
+{json.dumps(primary_analysis, indent=2)}
+
+COMPLETED TASKS SO FAR:
+{json.dumps(self.goal_memory.completed_tasks[-5:], indent=2)}
+
+PREVIOUS DEVIATIONS:
+{json.dumps(self.goal_memory.deviation_warnings, indent=2)}
+
+Your job:
+1. Review the junior AI's concerns
+2. Make a final decision
+3. Decide if we should INTERVENE (pause agent, alert user, take over)
+
+Respond with JSON:
+{{
+    "agree_with_junior": true/false,
+    "severity": "none|low|medium|high|critical",
+    "should_intervene": true/false,
+    "intervention_type": "none|alert_user|pause_agent|take_control|redirect",
+    "detailed_explanation": "full analysis of the situation",
+    "suggested_action": "specific steps to take"
+}}"""
+            },
+            {
+                "role": "user",
+                "content": "Review this situation and decide if we should intervene."
+            }
+        ]
+
+        try:
+            response = self.assistant.get_ai_response(messages, screenshot if model.supports_vision else None)
+
+            import re
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                decision = json.loads(json_match.group())
+
+                # Log deviation if confirmed
+                if decision.get('should_intervene'):
+                    self.goal_memory.add_deviation(
+                        decision.get('detailed_explanation', 'Unknown issue'),
+                        severity=decision.get('severity', 'medium')
+                    )
+
+                # Reset suspicious count after escalation
+                self.suspicious_activity_count = 0
+
+                return {
+                    **primary_analysis,
+                    'escalated': True,
+                    'senior_decision': decision
+                }
+        except Exception as e:
+            print(f"[OVERSIGHT ESCALATION ERROR] {e}")
+
+        return primary_analysis
 
 class ProcessMonitor:
     """Monitors running processes and terminal output for errors"""
@@ -504,6 +775,8 @@ class EliteAIAssistant:
             "anthropic": os.getenv('ANTHROPIC_API_KEY'),
             "openrouter": os.getenv('OPENROUTER_API_KEY'),
             "xai": os.getenv('XAI_API_KEY'),
+            "groq": os.getenv('GROQ_API_KEY'),
+            "together": os.getenv('TOGETHER_API_KEY'),
             "leonardo": os.getenv('LEONARDO_API_KEY')
         }
         self.clients = {}
@@ -525,7 +798,17 @@ class EliteAIAssistant:
                 api_key=self.api_keys["xai"],
                 base_url="https://api.x.ai/v1"
             )
-        
+        if self.api_keys["groq"]:
+            self.clients["groq"] = OpenAI(
+                api_key=self.api_keys["groq"],
+                base_url="https://api.groq.com/openai/v1"
+            )
+        if self.api_keys["together"]:
+            self.clients["together"] = OpenAI(
+                api_key=self.api_keys["together"],
+                base_url="https://api.together.xyz/v1"
+            )
+
         self.current_model = "claude-4-5-sonnet"
         self.is_watching = False
         self.is_controlling = False
@@ -537,6 +820,9 @@ class EliteAIAssistant:
         self.process_monitor = ProcessMonitor()
         self.command_executor = CommandExecutor(self.process_monitor)
         self.guardian_mode = False  # Sleep mode for 6-8 hours
+
+        # Agent Oversight System - AI babysitter for Claude Code
+        self.agent_oversight = AgentOversightMonitor(self)
 
         # Initialize Leonardo AI client if key is present
         if self.api_keys["leonardo"]:
@@ -603,6 +889,10 @@ class EliteAIAssistant:
                 return self._get_openrouter_response(messages, screenshot, model.model_id)
             elif provider == "xai":
                 return self._get_xai_response(messages, screenshot, model.model_id)
+            elif provider == "groq":
+                return self._get_groq_response(messages, screenshot, model.model_id)
+            elif provider == "together":
+                return self._get_together_response(messages, screenshot, model.model_id)
         except Exception as e:
             return f"Error with {model.display_name}: {str(e)}"
     
@@ -754,9 +1044,55 @@ class EliteAIAssistant:
             max_tokens=1000,
             temperature=0.7
         )
-        
+
         return response.choices[0].message.content
-    
+
+    def _get_groq_response(self, messages: list, screenshot: str, model_id: str) -> str:
+        """Get response from Groq (Llama 3.1) - Ultra fast inference"""
+        client = self.clients["groq"]
+
+        # Groq doesn't support vision for Llama models, so we skip screenshot
+        formatted_messages = []
+        for msg in messages:
+            if isinstance(msg["content"], str):
+                formatted_messages.append(msg)
+            else:
+                # Extract only text content
+                text_content = " ".join([c["text"] for c in msg["content"] if c.get("type") == "text"])
+                formatted_messages.append({"role": msg["role"], "content": text_content})
+
+        response = client.chat.completions.create(
+            model=model_id,
+            messages=formatted_messages,
+            max_tokens=1000,
+            temperature=0.7
+        )
+
+        return response.choices[0].message.content
+
+    def _get_together_response(self, messages: list, screenshot: str, model_id: str) -> str:
+        """Get response from Together AI (Llama 3) - Fast and cheap"""
+        client = self.clients["together"]
+
+        # Together AI doesn't support vision for Llama models
+        formatted_messages = []
+        for msg in messages:
+            if isinstance(msg["content"], str):
+                formatted_messages.append(msg)
+            else:
+                # Extract only text content
+                text_content = " ".join([c["text"] for c in msg["content"] if c.get("type") == "text"])
+                formatted_messages.append({"role": msg["role"], "content": text_content})
+
+        response = client.chat.completions.create(
+            model=model_id,
+            messages=formatted_messages,
+            max_tokens=1000,
+            temperature=0.7
+        )
+
+        return response.choices[0].message.content
+
     def analyze_screen(self, screenshot: str, user_message: str = None) -> str:
         """Analyze the screenshot and provide assistance"""
         model = AI_MODELS[self.current_model]
@@ -2432,6 +2768,87 @@ def handle_toggle_guardian():
             'sender': 'system'
         }, broadcast=True)
 
+@socketio.on('set_agent_goal')
+def handle_set_agent_goal(data):
+    """Set the goal for agent oversight - what you want done before you wake up"""
+    goal = data.get('goal', '')
+    expected_duration = data.get('expected_duration', None)  # in minutes
+
+    if not goal:
+        emit('message', {
+            'message': "❌ Please provide a goal description",
+            'sender': 'system'
+        }, broadcast=True)
+        return
+
+    assistant.agent_oversight.start_agent_oversight(goal, expected_duration)
+
+    emit('message', {
+        'message': f"🎯 Goal set: {goal}\n{'Expected duration: ' + str(expected_duration) + ' minutes' if expected_duration else 'No time limit set'}\n\nI'll watch Claude Code agents and make sure they stay on task!",
+        'sender': 'system'
+    }, broadcast=True)
+
+    emit('status_update', {
+        'agent_oversight': True,
+        'goal': goal
+    }, broadcast=True)
+
+@socketio.on('toggle_agent_oversight')
+def handle_toggle_agent_oversight():
+    """Toggle agent oversight monitoring"""
+    if assistant.agent_oversight.is_monitoring_agents:
+        assistant.agent_oversight.stop_agent_oversight()
+
+        emit('message', {
+            'message': "Agent oversight stopped.",
+            'sender': 'system'
+        }, broadcast=True)
+    else:
+        emit('message', {
+            'message': "⚠️ Please set a goal first using 'Set Agent Goal'",
+            'sender': 'system'
+        }, broadcast=True)
+
+    emit('status_update', {
+        'agent_oversight': assistant.agent_oversight.is_monitoring_agents
+    }, broadcast=True)
+
+@socketio.on('get_agent_progress')
+def handle_get_agent_progress():
+    """Get current progress towards the goal"""
+    progress = assistant.agent_oversight.goal_memory.get_progress_summary()
+
+    emit('agent_progress', progress, broadcast=True)
+
+    # Send formatted message to chat
+    if progress['goal']:
+        status_msg = f"""📊 **Agent Oversight Progress Report**
+
+**Goal:** {progress['goal']['description']}
+**Time Elapsed:** {progress['elapsed_minutes']} minutes
+{'**Expected:** ' + str(progress['expected_minutes']) + ' minutes' if progress['expected_minutes'] else ''}
+
+**Completed Tasks:** {len(progress['completed_tasks'])}
+**Warnings:** {len(progress['deviation_warnings'])}
+
+**Status:** {'✅ On Track' if progress['on_track'] else '⚠️ Issues Detected'}
+"""
+
+        if progress['deviation_warnings']:
+            status_msg += "\n**Recent Warnings:**\n"
+            for warning in progress['deviation_warnings'][-3:]:
+                status_msg += f"- [{warning['severity'].upper()}] {warning['description']}\n"
+
+        emit('message', {
+            'message': status_msg,
+            'sender': 'system'
+        }, broadcast=True)
+    else:
+        emit('message', {
+            'message': "No active oversight goal set.",
+            'sender': 'system'
+        }, broadcast=True)
+
 @socketio.on('request_help')
 def handle_help_request():
     model = AI_MODELS[assistant.current_model]
@@ -2517,6 +2934,26 @@ def watch_screen_loop():
                     'suggested_fix': error_detected.get('suggested_fix', 'No suggestion available'),
                     'timestamp': datetime.now().isoformat()
                 })
+
+            # STEP 2: Agent Oversight - Watch Claude Code agents
+            if assistant.agent_oversight.is_monitoring_agents:
+                agent_analysis = assistant.agent_oversight.analyze_agent_activity(screenshot)
+
+                if agent_analysis:
+                    # Emit agent activity to UI
+                    socketio.emit('agent_activity', agent_analysis)
+
+                    # Check if we need to intervene
+                    if agent_analysis.get('escalated') and agent_analysis.get('senior_decision', {}).get('should_intervene'):
+                        socketio.emit('agent_intervention_required', {
+                            'analysis': agent_analysis,
+                            'timestamp': datetime.now().isoformat()
+                        })
+
+                        socketio.emit('message', {
+                            'message': f"🚨 AGENT OVERSIGHT: {agent_analysis['senior_decision']['detailed_explanation']}",
+                            'sender': 'system'
+                        }, broadcast=True)
 
             # If AI has control, check for tasks
             if assistant.is_controlling:
